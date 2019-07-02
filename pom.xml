@@ -28,7 +28,7 @@
   </parent>
 
   <artifactId>org.apache.sling.feature.r2f</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>0.0.1-SNAPSHOT</version>
 
   <name>Apache Sling Feature Model runtime creator</name>
   <description>Feature Model runtime creator tool for Apache Sling</description>
@@ -90,7 +90,7 @@
     <dependency>
       <groupId>org.apache.sling</groupId>
       <artifactId>org.apache.sling.feature.diff</artifactId>
-      <version>1.0.0-SNAPSHOT</version>
+      <version>0.0.2</version>
     </dependency>
 
     <!--
