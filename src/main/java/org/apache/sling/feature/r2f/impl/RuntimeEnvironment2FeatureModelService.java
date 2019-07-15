@@ -45,13 +45,13 @@ import org.apache.sling.feature.diff.DiffRequest;
 import org.apache.sling.feature.r2f.RuntimeEnvironment2FeatureModel;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
-import org.osgi.framework.ServiceReference;
 import org.osgi.framework.Version;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
 
 @Component(service = RuntimeEnvironment2FeatureModel.class)
 public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironment2FeatureModel, FeatureProvider {
@@ -76,9 +76,12 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
 
     private static final String PACKAGING_FEATURE = "slingosgifeature";
 
+    private final Map<Entry<String, Version>, ArtifactId> bvm = new HashMap<>();
+
     protected BundleContext bundleContext;
 
-    private final Map<Entry<String, Version>, ArtifactId> bvm = new HashMap<>();
+    @Reference
+    protected ConfigurationAdmin configurationAdmin;
 
     private Feature launchFeature;
 
@@ -188,23 +191,16 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
 
         // collect all configurations
 
-        ServiceReference<ConfigurationAdmin> configurationAdminReference = bundleContext.getServiceReference(ConfigurationAdmin.class);
-        if (configurationAdminReference != null) {
-            ConfigurationAdmin configurationAdmin = bundleContext.getService(configurationAdminReference);
+        try {
+            Configuration[] configurations = configurationAdmin.listConfigurations(null);
+            if (configurations != null && configurations.length > 0) {
+                OSGiConfiguration2FeatureConfigurationMapper mapper = new OSGiConfiguration2FeatureConfigurationMapper(targetFeature);
 
-            if (configurationAdmin != null) {
-                try {
-                    Configuration[] configurations = configurationAdmin.listConfigurations(null);
-                    if (configurations != null) {
-                        OSGiConfiguration2FeatureConfigurationMapper mapper = new OSGiConfiguration2FeatureConfigurationMapper(targetFeature);
-
-                        Stream.of(configurations).map(mapper).forEach(mapper);
-                    }
-                } catch (Exception e) {
-                    // that should not happen
-                    throw new RuntimeException("Something went wrong while iterating over all available Configurations", e);
-                }
+                Stream.of(configurations).map(mapper).forEach(mapper);
             }
+        } catch (Exception e) {
+            // that should not happen
+            throw new RuntimeException("Something went wrong while iterating over all available Configurations", e);
         }
 
         return targetFeature;
