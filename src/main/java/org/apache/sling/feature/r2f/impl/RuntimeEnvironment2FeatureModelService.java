@@ -78,7 +78,7 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
 
     protected BundleContext bundleContext;
 
-    private Map<Entry<String, Version>, ArtifactId> bvm;
+    private final Map<Entry<String, Version>, ArtifactId> bvm = new HashMap<>();
 
     private Feature launchFeature;
 
@@ -86,13 +86,11 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
     public void start(BundleContext bundleContext) {
         this.bundleContext = bundleContext;
 
-        bvm = readBSNVerMap(bundleContext);
-        launchFeature = readLaunchFeature(bundleContext);
+        readBSNVerMap();
+        readLaunchFeature();
     }
 
-    private static Map<Entry<String, Version>, ArtifactId> readBSNVerMap(BundleContext bundleContext) {
-        Map<Entry<String, Version>, ArtifactId> bvm = new HashMap<>();
-
+    private void readBSNVerMap() {
         try {
             URI idbsnverFile = getDataFileURI(bundleContext, IDBSNVER_FILENAME);
 
@@ -112,8 +110,6 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
         } catch (Exception e) {
             throw new IllegalStateException("An error occurred while loading 'idbsnver.properties' file, impossible to assemble the bundles map", e);
         }
-
-        return bvm;
     }
 
     // borrowed from org.apache.sling.feature.apiregions.impl.RegionEnforcer
@@ -148,7 +144,7 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
         }
     }
 
-    private static Feature readLaunchFeature(BundleContext bundleContext) {
+    private void readLaunchFeature() {
         String launchFeatureLocation = bundleContext.getProperty(SLING_FEATURE_PROPERTY_NAME);
 
         if (launchFeatureLocation == null) {
@@ -159,7 +155,7 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
         Path launchFeaturePath = Paths.get(launchFeatureURI);
 
         try (BufferedReader reader = newBufferedReader(launchFeaturePath)) {
-            return read(reader, launchFeatureLocation);
+            launchFeature = read(reader, launchFeatureLocation);
         } catch (IOException cause) {
             throw new UncheckedIOException(cause);
         }
@@ -168,6 +164,7 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
     @Deactivate
     public void stop() {
         bundleContext = null;
+        bvm.clear();
         launchFeature = null;
     }
 
