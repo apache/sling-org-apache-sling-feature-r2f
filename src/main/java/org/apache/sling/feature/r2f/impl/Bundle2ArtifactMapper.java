@@ -22,14 +22,18 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
+import java.util.AbstractMap;
 import java.util.Collection;
+import java.util.Map;
 import java.util.Properties;
+import java.util.Map.Entry;
 import java.util.function.Function;
 
 import org.apache.sling.feature.Artifact;
 import org.apache.sling.feature.ArtifactId;
 import org.apache.sling.feature.Feature;
 import org.osgi.framework.Bundle;
+import org.osgi.framework.Version;
 import org.osgi.framework.startlevel.BundleStartLevel;
 import org.osgi.framework.wiring.BundleWiring;
 
@@ -47,12 +51,44 @@ final class Bundle2ArtifactMapper extends AbstractFeatureElementConsumer<Artifac
 
     private static final String CLASSIFIER = "classifier";
 
-    public Bundle2ArtifactMapper(Feature targetFeature) {
+    private final Map<Entry<String, Version>, ArtifactId> bvm;
+
+    public Bundle2ArtifactMapper(Feature targetFeature, Map<Entry<String, Version>, ArtifactId> bvm) {
         super(targetFeature);
+        this.bvm = bvm;
     }
 
     @Override
     public Artifact apply(Bundle bundle) {
+        if (0 == bundle.getBundleId()) {
+            // ignore the OSGi framework
+            return null;
+        }
+
+        ArtifactId id = bvm.get(new AbstractMap.SimpleEntry<>(bundle.getSymbolicName(), bundle.getVersion()));
+        if (id == null) {
+            id = readGavFromPomProperties(bundle);
+        }
+
+        if (id == null) {
+            // it must be a corner case exception...
+            throw new IllegalStateException("Bundle "
+                                            + bundle.getSymbolicName()
+                                            + '-'
+                                            + bundle.getVersion()
+                                            + " not found in the 'idbsnver.properties' map nor it contains the META-INF/[groupId]/[artifactId]/pom.properties file");
+        }
+
+        Artifact artifact = new Artifact(id);
+
+        BundleStartLevel bundleStartLevel = bundle.adapt(BundleStartLevel.class);
+        int startOrder = bundleStartLevel.getStartLevel();
+        artifact.setStartOrder(startOrder);
+
+        return artifact;
+    }
+
+    private static ArtifactId readGavFromPomProperties(Bundle bundle) {
         Properties pomProperties = new Properties();
 
         BundleWiring bundleWiring = bundle.adapt(BundleWiring.class);
@@ -96,13 +132,7 @@ final class Bundle2ArtifactMapper extends AbstractFeatureElementConsumer<Artifac
         String version = pomProperties.getProperty(VERSION);
         String classifier = pomProperties.getProperty(CLASSIFIER);
 
-        Artifact artifact = new Artifact(new ArtifactId(groupId, artifactId, version, classifier, null));
-
-        BundleStartLevel bundleStartLevel = bundle.adapt(BundleStartLevel.class);
-        int startOrder = bundleStartLevel.getStartLevel();
-        artifact.setStartOrder(startOrder);
-
-        return artifact;
+        return new ArtifactId(groupId, artifactId, version, classifier, null);
     }
 
     private static URL getPomPropertiesURL(Collection<String> pomPropertiesResources, Bundle bundle) {

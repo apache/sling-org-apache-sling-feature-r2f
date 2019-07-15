@@ -22,11 +22,18 @@ import static org.apache.sling.feature.diff.FeatureDiff.compareFeatures;
 import static org.apache.sling.feature.io.json.FeatureJSONReader.read;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.AbstractMap;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Properties;
 import java.util.stream.Stream;
 
 import org.apache.sling.feature.ArtifactId;
@@ -39,6 +46,7 @@ import org.apache.sling.feature.r2f.RuntimeEnvironment2FeatureModel;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceReference;
+import org.osgi.framework.Version;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.Activate;
@@ -47,6 +55,18 @@ import org.osgi.service.component.annotations.Deactivate;
 
 @Component(service = RuntimeEnvironment2FeatureModel.class)
 public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironment2FeatureModel, FeatureProvider {
+
+    // borrowed from org.apache.sling.feature.apiregions.impl.RegionEnforcer
+    private static final String IDBSNVER_FILENAME = "idbsnver.properties";
+
+    // borrowed from org.apache.sling.feature.apiregions.impl.RegionEnforcer
+    private static final String PROPERTIES_RESOURCE_PREFIX = "sling.feature.apiregions.resource.";
+
+    // borrowed from org.apache.sling.feature.apiregions.impl.RegionEnforcer
+    private static final String PROPERTIES_FILE_LOCATION = "sling.feature.apiregions.location";
+
+    // borrowed from org.apache.sling.feature.apiregions.impl.RegionEnforcer
+    private static final String CLASSLOADER_PSEUDO_PROTOCOL = "classloader://";
 
     private static final String SLING_FEATURE_PROPERTY_NAME = "sling.feature";
 
@@ -58,12 +78,77 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
 
     protected BundleContext bundleContext;
 
+    private Map<Entry<String, Version>, ArtifactId> bvm;
+
     private Feature launchFeature;
 
     @Activate
     public void start(BundleContext bundleContext) {
         this.bundleContext = bundleContext;
 
+        bvm = readBSNVerMap(bundleContext);
+        launchFeature = readLaunchFeature(bundleContext);
+    }
+
+    private static Map<Entry<String, Version>, ArtifactId> readBSNVerMap(BundleContext bundleContext) {
+        Map<Entry<String, Version>, ArtifactId> bvm = new HashMap<>();
+
+        try {
+            URI idbsnverFile = getDataFileURI(bundleContext, IDBSNVER_FILENAME);
+
+            Properties properties = new Properties();
+            try (InputStream is = idbsnverFile.toURL().openStream()) {
+                properties.load(is);
+            }
+
+            for (String artifactId : properties.stringPropertyNames()) {
+                String[] bsnver = properties.getProperty(artifactId).split("~");
+                String bundleSymbolicName = bsnver[0];
+                String bundleVersion = bsnver[1];
+                Version version = Version.valueOf(bundleVersion);
+
+                bvm.put(new AbstractMap.SimpleEntry<>(bundleSymbolicName, version), ArtifactId.parse(artifactId));
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("An error occurred while loading 'idbsnver.properties' file, impossible to assemble the bundles map", e);
+        }
+
+        return bvm;
+    }
+
+    // borrowed from org.apache.sling.feature.apiregions.impl.RegionEnforcer
+    private static URI getDataFileURI(BundleContext ctx, String name) throws Exception {
+        String fn = ctx.getProperty(PROPERTIES_RESOURCE_PREFIX + name);
+        if (fn == null) {
+            String loc = ctx.getProperty(PROPERTIES_FILE_LOCATION);
+            if (loc != null) {
+                fn = loc + "/" + name;
+            }
+        }
+
+        if (fn == null)
+            throw new IOException("API Region Enforcement enabled, but no configuration found to find "
+                                  + "region definition resource: "
+                                  + name);
+
+        if (fn.contains(":")) {
+            if (fn.startsWith(CLASSLOADER_PSEUDO_PROTOCOL)) {
+                // It's using the 'classloader:' protocol looks up the location from the
+                // classloader
+                String loc = fn.substring(CLASSLOADER_PSEUDO_PROTOCOL.length());
+                if (!loc.startsWith("/"))
+                    loc = "/" + loc;
+                fn = RuntimeEnvironment2FeatureModelService.class.getResource(loc).toString();
+            }
+            // It's already a URL
+            return new URI(fn);
+        } else {
+            // It's a file location
+            return new File(fn).toURI();
+        }
+    }
+
+    private static Feature readLaunchFeature(BundleContext bundleContext) {
         String launchFeatureLocation = bundleContext.getProperty(SLING_FEATURE_PROPERTY_NAME);
 
         if (launchFeatureLocation == null) {
@@ -74,7 +159,7 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
         Path launchFeaturePath = Paths.get(launchFeatureURI);
 
         try (BufferedReader reader = newBufferedReader(launchFeaturePath)) {
-            launchFeature = read(reader, launchFeatureLocation);
+            return read(reader, launchFeatureLocation);
         } catch (IOException cause) {
             throw new UncheckedIOException(cause);
         }
@@ -99,9 +184,9 @@ public class RuntimeEnvironment2FeatureModelService implements RuntimeEnvironmen
 
         Bundle[] bundles = bundleContext.getBundles();
         if (bundles != null) {
-            Bundle2ArtifactMapper mapper = new Bundle2ArtifactMapper(targetFeature);
+            Bundle2ArtifactMapper mapper = new Bundle2ArtifactMapper(targetFeature, bvm);
 
-            Stream.of(bundles).map(mapper).forEach(mapper);
+            Stream.of(bundles).map(mapper).filter(bundle -> bundle != null).forEach(mapper);
         }
 
         // collect all configurations
